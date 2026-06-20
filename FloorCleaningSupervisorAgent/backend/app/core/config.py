@@ -3,6 +3,5 @@ import os
 
 load_dotenv()
 
-COSMOS_URL = os.getenv("COSMOS_URL")
-COSMOS_KEY = os.getenv("COSMOS_KEY")
-DATABASE_NAME = os.getenv("DATABASE_NAME")
+MONGO_URI = os.getenv("MONGO_URI")
+MONGO_DATABASE = os.getenv("MONGO_DATABASE")

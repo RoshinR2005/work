@@ -1,7 +1,8 @@
 fastapi
 uvicorn
-azure-cosmos
+pymongo
 python-dotenv
 pydantic
 bcrypt==4.0.1
 passlib
+certifi

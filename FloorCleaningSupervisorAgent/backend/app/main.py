@@ -1,9 +1,11 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 
-print("MAIN.PY LOADED")
-print("FILE =", Path(__file__).resolve())
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from app.core.config import MONGO_DATABASE
+from app.core.database import users_container
 from app.routes import (
     alert_routes,
     audit_routes,
@@ -18,16 +20,24 @@ from app.routes import (
     tag_routes,
     user_routes,
 )
-from app.core.database import checkpoints_container
+
+print("MAIN.PY LOADED")
+print("FILE =", Path(__file__).resolve())
 
 app = FastAPI(title="Abhishek API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 app.include_router(auth_routes.router)
@@ -51,7 +61,27 @@ def abc123():
 @app.get("/test-db")
 def test_db():
     try:
-        items = list(checkpoints_container.read_all_items())
-        return {"status": "connected", "count": len(items)}
-    except Exception as e:
-        return {"error": str(e)}
+        if hasattr(users_container, "collection"):
+            db_name = users_container.collection.database.name
+            collection_name = users_container.collection.name
+            count = users_container.collection.count_documents({})
+        else:
+            db_name = MONGO_DATABASE or "in-memory"
+            collection_name = getattr(users_container, "id", "users")
+            count = len(list(users_container.read_all_items()))
+
+        return {
+            "status": "connected",
+            "database": db_name,
+            "collection": collection_name,
+            "count": count,
+        }
+    except Exception as exc:
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "error",
+                "database": MONGO_DATABASE or "not-configured",
+                "message": str(exc),
+            },
+        )
