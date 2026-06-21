@@ -176,6 +176,7 @@ export interface CleanerDashboardResponse {
     today_compliance: number;
     active_alerts: number;
     completed_rounds: number;
+    daily_rounds: number;
   };
   alerts: Alert[];
 }

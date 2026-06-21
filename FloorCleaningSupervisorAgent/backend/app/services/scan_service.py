@@ -136,26 +136,47 @@ def _create_audit_log(store_id: str, action: str, entity_type: str, entity_id: s
 
 
 def _ensure_round_session(store_id: str, employee_id: str, employee_name: str, shift_date: str, expected_checkpoints: int):
-    round_id = f"{store_id}:{employee_id}:{shift_date}"
-    try:
-        session = rounds_container.read_item(item=round_id, partition_key=store_id)
-    except Exception:
-        session = {
-            "id": round_id,
-            "store_id": store_id,
-            "employee_id": employee_id,
-            "employee_name": employee_name,
-            "name": f"Cleaning Round {shift_date}",
-            "shift_date": shift_date,
-            "time": _now(),
-            "staff": employee_name,
-            "status": "active",
-            "totalScans": expected_checkpoints,
-            "completedScans": 0,
-            "compliance": 0,
-            "scans": [],
-        }
-        rounds_container.create_item(session)
+    # Rounds belong to the STORE, not the employee.
+    # Find the current active round, or the last completed round for today,
+    # and start a new one (round N+1) if the last round is complete.
+    existing_rounds = list(
+        rounds_container.query_items(
+            query="SELECT * FROM c WHERE c.store_id=@store_id AND c.shift_date=@shift_date",
+            parameters=[
+                {"name": "@store_id", "value": store_id},
+                {"name": "@shift_date", "value": shift_date},
+            ],
+            enable_cross_partition_query=True,
+        )
+    )
+    # Sort by round number (ascending)
+    existing_rounds.sort(key=lambda r: int(r.get("round_number", 1)))
+
+    # Use the active round if one exists
+    active = next((r for r in existing_rounds if r.get("status") == "active"), None)
+    if active:
+        return active
+
+    # All existing rounds are completed — start the next one
+    next_round_number = len(existing_rounds) + 1
+    round_id = f"{store_id}:{shift_date}:{next_round_number}"
+    session = {
+        "id": round_id,
+        "store_id": store_id,
+        "round_number": next_round_number,
+        "employee_id": employee_id,
+        "employee_name": employee_name,
+        "name": f"Round {next_round_number} of {shift_date}",
+        "shift_date": shift_date,
+        "time": _now(),
+        "staff": employee_name,
+        "status": "active",
+        "totalScans": expected_checkpoints,
+        "completedScans": 0,
+        "compliance": 0,
+        "scans": [],
+    }
+    rounds_container.create_item(session)
     return session
 
 

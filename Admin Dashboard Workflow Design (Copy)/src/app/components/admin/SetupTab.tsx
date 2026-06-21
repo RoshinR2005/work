@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronLeft, Cpu, Tag, CheckCircle, FileText,
   ToggleLeft, ToggleRight, ChevronDown, RefreshCw,
@@ -32,6 +32,7 @@ import {
   type UserRecord,
 } from '../../api';
 import { ReportModal } from '../shared/ReportModal';
+import { useNfc } from '../../hooks/useNfc';
 
 interface Props {
   navigate: (view: string, params?: Record<string, unknown>) => void;
@@ -42,6 +43,14 @@ interface Props {
 
 function TagRegistrationView({ goBack, navigate }: { goBack: () => void; navigate: (v: string, p?: Record<string, unknown>) => void }) {
   const t = useT();
+  const {
+    availability,
+    startScan: startNfcScan,
+    openSettings,
+    isNfcScanError,
+    getNfcErrorMessage,
+    cancelScan,
+  } = useNfc();
   const [stores, setStores] = useState<StoreSummary[]>([]);
   const [storeId, setStoreId] = useState('');
   const [uid, setUid] = useState('');
@@ -51,6 +60,7 @@ function TagRegistrationView({ goBack, navigate }: { goBack: () => void; navigat
   const [scanDone, setScanDone] = useState(false);
   const [gps, setGps] = useState<{ lat: number; lon: number } | null>(null);
   const [checkpointId, setCheckpointId] = useState('');
+  const scanFlowIdRef = useRef(0);
 
   useEffect(() => {
     getStores().then(items => {
@@ -59,25 +69,63 @@ function TagRegistrationView({ goBack, navigate }: { goBack: () => void; navigat
     }).catch(() => setStores([]));
   }, []);
 
+  useEffect(() => {
+    return () => {
+      scanFlowIdRef.current += 1;
+      void cancelScan();
+    };
+  }, [cancelScan]);
+
   const startScan = () => {
     setScanning(true);
     setError('');
+    setUid('');
+    setScanDone(false);
+    const flowId = ++scanFlowIdRef.current;
     window.navigator.geolocation?.getCurrentPosition(
       pos => {
+        if (scanFlowIdRef.current !== flowId) {
+          return;
+        }
         setGps({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-        setScanning(false);
-        setScanDone(true);
+        void readNfcTag(flowId);
       },
       () => {
+        if (scanFlowIdRef.current !== flowId) {
+          return;
+        }
         setGps({ lat: 0, lon: 0 });
-        setScanning(false);
-        setScanDone(true);
+        void readNfcTag(flowId);
       },
       { enableHighAccuracy: true, timeout: 5000 }
     );
   };
 
   const [error, setError] = useState('');
+
+  const readNfcTag = async (flowId: number) => {
+    if (scanFlowIdRef.current !== flowId) {
+      return;
+    }
+
+    try {
+      const scannedUid = await startNfcScan({ timeoutMs: 30000 });
+      if (scanFlowIdRef.current !== flowId) {
+        return;
+      }
+      setUid(scannedUid);
+      setScanDone(true);
+    } catch (err) {
+      if (isNfcScanError(err) && err.kind === 'canceled') {
+        return;
+      }
+
+      setError(getNfcErrorMessage(err));
+      setScanDone(false);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const canSubmit = scanDone && uid.trim() && locationName.trim() && storeId;
 
@@ -152,11 +200,22 @@ function TagRegistrationView({ goBack, navigate }: { goBack: () => void; navigat
           <div className="space-y-3">
             <div>
               <label className={`block text-xs mb-1 ${t.textXs}`}>NFC Tag UID *</label>
-              <input value={uid} onChange={e => setUid(e.target.value)} placeholder="04:A3:7F:2B:C1:88" className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 ${t.input}`} />
+              <input value={uid} readOnly placeholder="04:A3:7F:2B:C1:88" className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 ${t.input} ${scanDone ? '' : 'bg-gray-50 dark:bg-gray-800/60'}`} />
             </div>
             <button onClick={startScan} disabled={scanning} className="w-full py-2.5 bg-orange-500 text-white rounded-xl text-sm font-semibold disabled:opacity-50 hover:bg-orange-600 transition-colors">
               {scanning ? 'Scanning...' : 'Start Scanning'}
             </button>
+            {availability.supported === false && (
+              <p className="text-xs text-red-600">NFC is not supported on this device.</p>
+            )}
+            {availability.supported === true && availability.enabled === false && (
+              <div className="space-y-2">
+                <p className="text-xs text-amber-600">NFC is turned off. Enable it to read tags.</p>
+                <button onClick={() => openSettings().catch(() => setError('Open device settings to enable NFC.'))} className="w-full py-2 text-xs font-semibold rounded-xl border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 transition-colors">
+                  Open NFC Settings
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -361,10 +420,10 @@ function RoundSetupView({ goBack, storeId }: { goBack: () => void; storeId?: str
 
         <div className={`rounded-2xl border shadow-sm p-4 ${t.card}`}>
           <h3 className={`text-sm font-semibold mb-0.5 ${t.text}`}>Number of Rounds</h3>
-          <p className={`text-xs mb-4 ${t.textXs}`}>Total cleaning rounds per shift per day</p>
+          <p className={`text-xs mb-4 ${t.textXs}`}>Total cleaning rounds per day for this store</p>
           <div className="flex items-center gap-3">
             <input type="number" min={1} max={99} value={numRounds} onChange={e => { const v = parseInt(e.target.value); if (!isNaN(v) && v >= 1) setNumRounds(Math.min(99, v)); }} className={`w-28 px-4 py-3 border-2 rounded-xl text-2xl font-bold text-center focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 text-orange-500 ${t.input}`} />
-            <span className={`text-sm ${t.textSm}`}>{numRounds === 1 ? 'round per shift' : 'rounds per shift'}</span>
+            <span className={`text-sm ${t.textSm}`}>{numRounds === 1 ? 'round per day' : 'rounds per day'}</span>
           </div>
         </div>
 
@@ -572,17 +631,31 @@ function UserCreationView({ goBack }: { goBack: () => void }) {
   const canAdd = newName.trim() && newUsername.trim() && newPassword.trim();
   const storeName = (sid?: string | null) => stores.find(s => s.id === sid)?.name ?? '—';
 
+  const [addError, setAddError] = useState('');
+
   const addUser = async () => {
     if (!canAdd) return;
-    const result = await createUser({
-      name: newName.trim(),
-      username: newUsername.trim(),
-      password: newPassword,
-      role: 'cleaner',
-      store_id: newStore,
-    });
-    setUsers(prev => [...prev, result.user]);
-    setNewName(''); setNewUsername(''); setNewPassword(''); setShowAdd(false);
+    setAddError('');
+    try {
+      const result = await createUser({
+        name: newName.trim(),
+        username: newUsername.trim(),
+        password: newPassword,
+        role: 'cleaner',
+        store_id: newStore,
+      });
+      if (result && (result as any).status === 'error') {
+        setAddError((result as any).message || 'Failed to create user');
+        return;
+      }
+      const newUser = (result as any).user ?? result;
+      if (newUser && newUser.user_id) {
+        setUsers(prev => [...prev, newUser]);
+      }
+      setNewName(''); setNewUsername(''); setNewPassword(''); setShowAdd(false);
+    } catch (err) {
+      setAddError(err instanceof Error ? err.message : 'Failed to create user');
+    }
   };
 
   return (
@@ -634,6 +707,7 @@ function UserCreationView({ goBack }: { goBack: () => void }) {
               <button onClick={() => setShowAdd(false)} className={`flex-1 py-2.5 border rounded-xl text-sm ${t.borderGray} ${t.textSm}`}>Cancel</button>
               <button onClick={addUser} disabled={!canAdd} className="flex-1 py-2.5 bg-orange-500 text-white rounded-xl text-sm font-semibold disabled:opacity-40 hover:bg-orange-600 transition-colors">Create User</button>
             </div>
+            {addError && <p className="text-xs text-red-600 mt-1">{addError}</p>}
           </div>
         )}
 

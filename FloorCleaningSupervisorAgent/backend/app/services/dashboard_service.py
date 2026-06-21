@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from app.core.database import alerts_container, rounds_container, scan_container, stores_container, tags_container, users_container
+from app.core.database import alerts_container, checkpoints_container, rounds_container, scan_container, stores_container, tags_container, users_container
 from app.services.alert_service import get_alert_summary, list_alerts
 from app.services.scan_service import get_scan_history, get_scan_stats
 from app.services.tag_service import get_tag_stats
@@ -193,6 +193,38 @@ def store_dashboard(store_id: str):
     }
 
 
+def _store_checkpoints(store_id: str) -> List[Dict[str, Any]]:
+    """Return all active/deployed checkpoints for a store."""
+    items = list(
+        checkpoints_container.query_items(
+            query="SELECT * FROM c WHERE c.store_id=@store_id",
+            parameters=[{"name": "@store_id", "value": store_id}],
+            enable_cross_partition_query=True,
+        )
+    )
+    return [item for item in items if item.get("is_active") or item.get("deployment_status") == "deployed"]
+
+
+def _build_checkpoint_items(
+    store_checkpoints: List[Dict[str, Any]],
+    scanned_uids: Dict[str, Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Merge registered checkpoints with scan history to produce checkpoint items."""
+    result = []
+    for cp in store_checkpoints:
+        uid = cp.get("nfc_tag_uid", "")
+        scan = scanned_uids.get(uid)
+        result.append({
+            "id": cp.get("id"),
+            "location": cp.get("name"),
+            "zone": cp.get("zone"),
+            "uid": uid,
+            "status": scan.get("scan_status", "pending") if scan else "pending",
+            "scannedAt": scan.get("server_timestamp") if scan else None,
+        })
+    return result
+
+
 def cleaner_dashboard(user_id: str):
     user = next((u for u in users_container.read_all_items() if u.get("user_id") == user_id), None)
     if not user:
@@ -206,12 +238,53 @@ def cleaner_dashboard(user_id: str):
     completed_rounds = [round_item for round_item in rounds if round_item.get("status") != "active"]
     alerts = _store_alerts(store_id) if store_id else []
 
+    # Build checkpoint items from the checkpoint registry, merged with today's scans.
+    # This ensures the cleaner sees ALL checkpoints, not just ones already scanned.
+    store_checkpoints: List[Dict[str, Any]] = _store_checkpoints(store_id) if store_id else []
+    today = datetime.utcnow().strftime("%Y-%m-%d")
+    todays_scans = [s for s in scans if (s.get("shift_date") or s.get("server_timestamp", ""))[:10] == today]
+    # Map uid -> most recent scan for today
+    scanned_uids: Dict[str, Dict[str, Any]] = {}
+    for s in sorted(todays_scans, key=lambda x: x.get("server_timestamp", "")):
+        uid = s.get("nfc_tag_uid", "")
+        if uid:
+            scanned_uids[uid] = s
+
+    checkpoint_items = _build_checkpoint_items(store_checkpoints, scanned_uids)
+    daily_rounds = int((store or {}).get("daily_rounds", 3))
+
+    # If there is an active round, attach the full checkpoint items list to it.
+    # If no active round, build a virtual current round from today's scan data.
+    if active_round is not None:
+        current_round_view = _round_to_view(active_round, active=True)
+        # Always override checkpointItems with the registry-based list
+        current_round_view["checkpointItems"] = checkpoint_items
+        current_round_view["totalScans"] = len(store_checkpoints) or current_round_view.get("totalScans", 0)
+        current_round_view["completedScans"] = len([c for c in checkpoint_items if c["status"] == "verified"])
+    elif store_checkpoints:
+        # No active round yet — present a virtual "Round 1" so the cleaner sees their checkpoints
+        current_round_view: Optional[Dict[str, Any]] = {
+            "id": None,
+            "name": "Round 1",
+            "time": None,
+            "staff": user.get("name"),
+            "compliance": 0,
+            "totalScans": len(store_checkpoints),
+            "completedScans": 0,
+            "isActive": True,
+            "checkpointItems": checkpoint_items,
+            "status": "active",
+        }
+    else:
+        current_round_view = None
+
     compliance_history = store.get("complianceHistory") if store and store.get("complianceHistory") else _bucket_scans(scans)
     stats = {
         "today_scans": len(scans),
         "today_compliance": _compliance_from_scans(scans),
         "active_alerts": len([alert for alert in alerts if not alert["reviewed"]]),
         "completed_rounds": len(completed_rounds),
+        "daily_rounds": daily_rounds,
     }
 
     return {
@@ -226,7 +299,7 @@ def cleaner_dashboard(user_id: str):
             "joined_at": user.get("joined_at"),
         },
         "store": _safe_store(store) if store else None,
-        "current_round": _round_to_view(active_round, active=True) if active_round else None,
+        "current_round": current_round_view,
         "completed_rounds": [_round_to_view(round_item) for round_item in completed_rounds],
         "compliance_history": compliance_history,
         "stats": stats,

@@ -21,7 +21,10 @@ def fetch_user_route(user_id: str):
 
 @router.post("")
 def create_user_route(payload: UserCreateRequest):
-    return add_user(payload)
+    result = add_user(payload)
+    if isinstance(result, dict) and result.get("status") == "error":
+        raise HTTPException(status_code=400, detail=result.get("message", "User creation failed"))
+    return result
 
 
 @router.put("/{user_id}/shift")
