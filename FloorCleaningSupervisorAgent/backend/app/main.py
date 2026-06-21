@@ -6,6 +6,8 @@ from fastapi.responses import JSONResponse
 
 from app.core.config import MONGO_DATABASE
 from app.core.database import users_container
+from app.schemas.auth_schema import RegisterRequest
+from app.services.auth_service import register_user, list_users
 from app.routes import (
     alert_routes,
     audit_routes,
@@ -25,6 +27,24 @@ print("MAIN.PY LOADED")
 print("FILE =", Path(__file__).resolve())
 
 app = FastAPI(title="Abhishek API")
+
+@app.on_event("startup")
+def seed_default_admin():
+    try:
+        users = list_users()
+        if not users:
+            print("[startup] No users found. Seeding default admin user (USR_001)")
+            admin_data = RegisterRequest(
+                user_id="USR_001",
+                name="Admin User",
+                email="admin@cleancheck.com",
+                password="password123",
+                role="admin",
+                store_id=None
+            )
+            register_user(admin_data)
+    except Exception as e:
+        print(f"[startup] Seeding failed: {e}")
 
 app.add_middleware(
     CORSMiddleware,

@@ -460,7 +460,7 @@ export function CleanerApp({ user, onLogout }: Props) {
     setScanError('');
     const flowId = ++scanFlowIdRef.current;
     try {
-      const position = await new Promise<{ lat: number; lon: number; accuracy?: number }>((resolve) => {
+      const gpsPromise = new Promise<{ lat: number; lon: number; accuracy?: number }>((resolve) => {
         window.navigator.geolocation?.getCurrentPosition(
           pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy }),
           () => resolve({ lat: 0, lon: 0, accuracy: undefined }),
@@ -468,30 +468,11 @@ export function CleanerApp({ user, onLogout }: Props) {
         );
       });
 
-      if (scanFlowIdRef.current !== flowId) {
-        return;
-      }
+      const nfcPromise = startNfcScan({ timeoutMs: 30000 });
 
-      let scannedUid = '';
-      try {
-        scannedUid = await startNfcScan({ timeoutMs: 30000 });
-      } catch (error) {
-        if (isNfcScanError(error) && error.kind === 'canceled') {
-          setScanStatus('idle');
-          return;
-        }
-
-        setScanError(getNfcErrorMessage(error));
-        setScanStatus('error');
-        setTimeout(() => {
-          setScanStatus('idle');
-          setScanError('');
-        }, 2200);
-        return;
-      }
+      const [position, scannedUid] = await Promise.all([gpsPromise, nfcPromise]);
 
       if (scanFlowIdRef.current !== flowId) {
-        await cancelScan();
         return;
       }
 
@@ -514,7 +495,20 @@ export function CleanerApp({ user, onLogout }: Props) {
       setRefreshKey(v => v + 1);
       setTimeout(() => setScanStatus('idle'), 1200);
     } catch (error) {
-      setScanError(error instanceof Error ? error.message : 'Unable to complete the checkpoint scan.');
+      if (isNfcScanError(error) && error.kind === 'canceled') {
+        setScanStatus('idle');
+        return;
+      }
+
+      if (scanFlowIdRef.current !== flowId) {
+        return;
+      }
+
+      const errorMsg = isNfcScanError(error)
+        ? getNfcErrorMessage(error)
+        : (error instanceof Error ? error.message : 'Unable to complete the checkpoint scan.');
+
+      setScanError(errorMsg);
       setScanStatus('error');
       setTimeout(() => {
         setScanStatus('idle');

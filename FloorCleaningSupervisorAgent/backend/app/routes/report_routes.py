@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.schemas.report_schema import ReportGenerateRequest
-from app.services.report_service import generate_report, list_reports
+from app.services.report_service import generate_report, list_reports, get_report_download
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -14,4 +14,9 @@ def generate_report_route(payload: ReportGenerateRequest):
 @router.get("")
 def fetch_reports(store_id: str | None = None):
     return list_reports(store_id)
+
+
+@router.get("/{report_id}/download")
+def download_report_route(report_id: str):
+    return get_report_download(report_id)
 

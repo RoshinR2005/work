@@ -48,14 +48,31 @@ function isAndroidPlatform() {
   return Capacitor.getPlatform() === 'android';
 }
 
-function bytesToHexUid(bytes: number[] | null | undefined) {
-  if (!Array.isArray(bytes) || bytes.length === 0) {
+function bytesToHexUid(bytes: any): string {
+  if (!bytes) {
     return '';
   }
 
-  return bytes
-    .map(byte => Number(byte).toString(16).padStart(2, '0').toUpperCase())
-    .join(':');
+  if (typeof bytes === 'string') {
+    return bytes.trim();
+  }
+
+  let arrayToConvert = bytes;
+  if (bytes instanceof ArrayBuffer) {
+    arrayToConvert = new Uint8Array(bytes);
+  }
+
+  if (Array.isArray(arrayToConvert) || ArrayBuffer.isView(arrayToConvert)) {
+    const arr = Array.from(arrayToConvert as Iterable<number>);
+    if (arr.length === 0) {
+      return '';
+    }
+    return arr
+      .map(byte => Number(byte).toString(16).padStart(2, '0').toUpperCase())
+      .join(':');
+  }
+
+  return '';
 }
 
 function extractTagUid(event: NfcEvent): string {
@@ -119,9 +136,10 @@ export function describeNfcAvailability(availability: NfcAvailability) {
 }
 
 export async function getNfcAvailability(): Promise<NfcAvailability> {
-  if (!isAndroidPlatform()) {
+  const platform = Capacitor.getPlatform();
+  if (platform !== 'android' && platform !== 'ios') {
     return {
-      platform: Capacitor.getPlatform(),
+      platform,
       supported: false,
       enabled: false,
     };
@@ -131,21 +149,26 @@ export async function getNfcAvailability(): Promise<NfcAvailability> {
     const { supported } = await CapacitorNfc.isSupported();
     if (!supported) {
       return {
-        platform: 'android',
+        platform,
         supported: false,
         enabled: false,
       };
     }
 
-    const { status } = await CapacitorNfc.getStatus();
+    let enabled = true;
+    if (platform === 'android') {
+      const { status } = await CapacitorNfc.getStatus();
+      enabled = status !== 'NFC_DISABLED';
+    }
+
     return {
-      platform: 'android',
+      platform,
       supported: true,
-      enabled: status !== 'NFC_DISABLED',
+      enabled,
     };
   } catch {
     return {
-      platform: 'android',
+      platform,
       supported: false,
       enabled: false,
     };
@@ -171,8 +194,9 @@ export async function cancelActiveNfcScan() {
 }
 
 export async function scanNfcUid(options: ScanNfcOptions = {}): Promise<string> {
-  if (!isAndroidPlatform()) {
-    throw new NfcScanError('unsupported', 'NFC scanning is only available on Android.');
+  const platform = Capacitor.getPlatform();
+  if (platform !== 'android' && platform !== 'ios') {
+    throw new NfcScanError('unsupported', 'NFC scanning is only available on Android and iOS.');
   }
 
   if (activeScanSession) {
@@ -269,6 +293,7 @@ export async function scanNfcUid(options: ScanNfcOptions = {}): Promise<string> 
     await CapacitorNfc.startScanning({
       invalidateAfterFirstRead: true,
       alertMessage: 'Tap the NFC tag now.',
+      iosSessionType: 'tag',
     });
   } catch (error) {
     await settleError(error);
