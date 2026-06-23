@@ -80,9 +80,17 @@ function TagRegistrationView({ goBack, navigate }: { goBack: () => void; navigat
     setScanning(true);
     setError('');
     setUid('');
+    setGps(null);
     setScanDone(false);
     const flowId = ++scanFlowIdRef.current;
-    window.navigator.geolocation?.getCurrentPosition(
+
+    if (!window.navigator.geolocation) {
+      setError('Location access is not available on this device.');
+      setScanning(false);
+      return;
+    }
+
+    window.navigator.geolocation.getCurrentPosition(
       pos => {
         if (scanFlowIdRef.current !== flowId) {
           return;
@@ -94,8 +102,9 @@ function TagRegistrationView({ goBack, navigate }: { goBack: () => void; navigat
         if (scanFlowIdRef.current !== flowId) {
           return;
         }
-        setGps({ lat: 0, lon: 0 });
-        void readNfcTag(flowId);
+        setGps(null);
+        setError('Unable to capture GPS location. Please enable location permission and try again.');
+        setScanning(false);
       },
       { enableHighAccuracy: true, timeout: 5000 }
     );

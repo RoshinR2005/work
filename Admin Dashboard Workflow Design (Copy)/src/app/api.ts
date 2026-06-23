@@ -26,6 +26,15 @@ export interface ScanLog {
   compliance: number;
 }
 
+export interface CheckpointItem {
+  id: string;
+  location: string;
+  zone?: string;
+  uid?: string;
+  status: 'verified' | 'missed' | 'pending' | 'error';
+  scannedAt?: string;
+}
+
 export interface Round {
   id: string;
   storeId: string;
@@ -36,6 +45,9 @@ export interface Round {
   totalScans: number;
   completedScans: number;
   scans: ScanLog[];
+  checkpointItems: CheckpointItem[];
+  isActive?: boolean;
+  status?: string;
 }
 
 export interface NFCTag {
@@ -143,14 +155,7 @@ export interface StoreDashboardResponse {
     completedScans: number;
     isActive?: boolean;
     status?: string;
-    checkpointItems: Array<{
-      id: string;
-      location: string;
-      zone?: string;
-      uid?: string;
-      status: 'verified' | 'missed' | 'pending' | 'error';
-      scannedAt?: string;
-    }>;
+    checkpointItems: CheckpointItem[];
   }>;
   alerts: Alert[];
   stale_time?: string | null;
@@ -297,9 +302,36 @@ function normalizeScan(scan: any): ScanLog {
   };
 }
 
-function normalizeRound(round: any): Round {
+function normalizeCheckpointItem(item: any): CheckpointItem {
+  const rawStatus = item.status ?? item.scan_status ?? 'pending';
+  const status: CheckpointItem['status'] =
+    rawStatus === 'verified'
+      ? 'verified'
+      : rawStatus === 'missed'
+        ? 'missed'
+        : rawStatus === 'error'
+          ? 'error'
+          : 'pending';
+
   return {
-    id: String(round.id),
+    id: String(item.id ?? ''),
+    location: item.location ?? item.checkpoint_name ?? item.tag_location ?? '',
+    zone: item.zone ?? undefined,
+    uid: item.uid ?? item.nfcUid ?? item.nfc_tag_uid ?? '',
+    status,
+    scannedAt: item.scannedAt ?? item.time ?? item.server_timestamp ?? undefined,
+  };
+}
+
+function normalizeRound(round: any): Round {
+  const checkpointItems = Array.isArray(round.checkpointItems)
+    ? round.checkpointItems.map((item: any) => normalizeCheckpointItem(item))
+    : Array.isArray(round.scans)
+      ? round.scans.map((scan: any) => normalizeCheckpointItem(scan))
+      : [];
+
+  return {
+    id: String(round.id ?? ''),
     storeId: String(round.store_id ?? round.storeId ?? ''),
     name: round.name ?? '',
     time: round.time ?? '',
@@ -320,6 +352,9 @@ function normalizeRound(round: any): Round {
             compliance: item.status === 'verified' ? 100 : 0,
           }))
         : [],
+    checkpointItems,
+    isActive: Boolean(round.isActive),
+    status: round.status ?? undefined,
   };
 }
 

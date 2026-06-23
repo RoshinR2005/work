@@ -8,7 +8,6 @@ import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useTheme, useT } from '../../ThemeContext';
 import { getCleanerDashboard, processScan, updateUserShift, type AppUser, type Alert, type ComplianceData, type Round } from '../../api';
 import { useNfc } from '../../hooks/useNfc';
-import { getNfcErrorMessage, isNfcScanError } from '../../services/nfcService';
 
 type TabType = 'scan' | 'dashboard' | 'home';
 type ScanStatus = 'idle' | 'scanning' | 'verified' | 'error';
@@ -22,6 +21,15 @@ type Checkpoint = {
   priority: 'high' | 'medium' | 'low' | '';
   status: 'pending' | 'scanning' | 'verified' | 'error';
   scannedAt?: string;
+};
+
+type ScanHistoryEntry = {
+  id: string;
+  uid: string;
+  location: string;
+  status: 'success' | 'error';
+  message: string;
+  time: string;
 };
 
 interface Props {
@@ -85,13 +93,13 @@ function StoreHeader({ storeName, alertCount, onAlerts }: { storeName: string; a
   );
 }
 
-function ScanTab({ checkpoints, scanStatus, scanError, nfcAvailabilityMessage, onOpenNfcSettings, nfcReady, onScan, onAlerts, alertCount, storeName, currentRoundName, dailyRoundsTotal, completedRoundsCount }: {
+function ScanTab({ checkpoints, scanHistory, scanStatus, scanError, nfcAvailabilityMessage, onOpenNfcSettings, onScan, onAlerts, alertCount, storeName, currentRoundName, dailyRoundsTotal, completedRoundsCount }: {
   checkpoints: Checkpoint[];
+  scanHistory: ScanHistoryEntry[];
   scanStatus: ScanStatus;
   scanError?: string;
   nfcAvailabilityMessage?: string;
   onOpenNfcSettings?: () => void;
-  nfcReady: boolean;
   onScan: () => void;
   onAlerts: () => void;
   alertCount: number;
@@ -106,6 +114,7 @@ function ScanTab({ checkpoints, scanStatus, scanError, nfcAvailabilityMessage, o
   const pendingCount = checkpoints.filter(c => c.status === 'pending' || c.status === 'scanning').length;
   const compliance = checkpoints.length ? Math.round((scannedCount / checkpoints.length) * 100) : 0;
   const allDone = checkpoints.length > 0 && pendingCount === 0 && scannedCount + errorCount === checkpoints.length;
+  const showNfcAvailabilityMessage = Boolean(nfcAvailabilityMessage && scanStatus !== 'scanning' && !scanError);
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -127,7 +136,7 @@ function ScanTab({ checkpoints, scanStatus, scanError, nfcAvailabilityMessage, o
       </div>
 
       <div className={`shrink-0 flex flex-col items-center gap-4 pt-5 pb-4 px-4 ${t.page}`}>
-        <button onClick={onScan} disabled={scanStatus === 'scanning' || allDone || !nfcReady} className={`w-52 h-52 rounded-full flex items-center justify-center relative transition-all duration-200 select-none shadow-2xl ${scanStatus === 'scanning' ? 'bg-orange-400' : scanStatus === 'verified' ? 'bg-green-500' : scanStatus === 'error' ? 'bg-red-600' : !nfcReady ? 'bg-gray-400' : 'bg-orange-500 hover:bg-orange-400 active:scale-95'}`}>
+        <button onClick={onScan} disabled={scanStatus === 'scanning' || allDone} className={`w-52 h-52 rounded-full flex items-center justify-center relative transition-all duration-200 select-none shadow-2xl ${scanStatus === 'scanning' ? 'bg-orange-400' : scanStatus === 'verified' ? 'bg-green-500' : scanStatus === 'error' ? 'bg-red-600' : allDone ? 'bg-gray-400' : 'bg-orange-500 hover:bg-orange-400 active:scale-95'}`}>
           <div className="absolute inset-5 rounded-full border-[2px] border-dashed border-white/50 pointer-events-none" />
           {scanStatus === 'scanning' ? (
             <span className="w-14 h-14 border-[5px] border-white border-t-transparent rounded-full animate-spin" />
@@ -149,7 +158,7 @@ function ScanTab({ checkpoints, scanStatus, scanError, nfcAvailabilityMessage, o
         {scanStatus === 'scanning' && (
           <p className={`text-xs text-center ${t.textMuted}`}>Tap the NFC tag to complete this checkpoint.</p>
         )}
-        {nfcAvailabilityMessage && scanStatus !== 'scanning' && (
+        {showNfcAvailabilityMessage && (
           <div className="space-y-2 text-center">
             <p className="text-xs text-red-500 px-2">{nfcAvailabilityMessage}</p>
             {onOpenNfcSettings && (
@@ -207,7 +216,7 @@ function DashboardTab({ checkpoints, onAlerts, alertCount, storeName, currentRou
   currentRound?: Round | null;
   completedRounds: Round[];
   complianceHistory: ComplianceData[];
-  stats: { today_scans: number; today_compliance: number; active_alerts: number; completed_rounds: number };
+  stats: { today_scans: number; today_compliance: number; active_alerts: number; completed_rounds: number; daily_rounds?: number };
 }) {
   const t = useT();
   const myComp = stats.today_compliance || 0;
@@ -301,7 +310,7 @@ function HomeTab({ user, storeName, alerts, currentShift, onEditShift, onAlerts,
   onAlerts: () => void;
   alertCount: number;
   complianceHistory: ComplianceData[];
-  stats: { today_scans: number; today_compliance: number; active_alerts: number; completed_rounds: number };
+  stats: { today_scans: number; today_compliance: number; active_alerts: number; completed_rounds: number; daily_rounds?: number };
 }) {
   const t = useT();
   const [editingShift, setEditingShift] = useState(false);
@@ -437,7 +446,16 @@ export function CleanerApp({ user, onLogout }: Props) {
   }, [activeTab, cancelScan]);
 
   const checkpoints = useMemo<Checkpoint[]>(() => {
-    const current = dashboard?.current_round?.checkpointItems || [];
+    const checkpointItems = dashboard?.current_round?.checkpointItems || [];
+    const fallbackScans = dashboard?.current_round?.scans?.map(scan => ({
+      id: scan.id,
+      uid: scan.nfcUid,
+      location: scan.location,
+      zone: '',
+      status: scan.status,
+      scannedAt: scan.time,
+    })) || [];
+    const current = checkpointItems.length ? checkpointItems : fallbackScans;
     return current.map((cp, index) => ({
       id: cp.id || `${index}`,
       uid: cp.uid || '',
@@ -460,10 +478,15 @@ export function CleanerApp({ user, onLogout }: Props) {
     setScanError('');
     const flowId = ++scanFlowIdRef.current;
     try {
-      const gpsPromise = new Promise<{ lat: number; lon: number; accuracy?: number }>((resolve) => {
-        window.navigator.geolocation?.getCurrentPosition(
+      const gpsPromise = new Promise<{ lat: number; lon: number; accuracy?: number }>((resolve, reject) => {
+        if (!window.navigator.geolocation) {
+          reject(new Error('Location access is not available on this device.'));
+          return;
+        }
+
+        window.navigator.geolocation.getCurrentPosition(
           pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy }),
-          () => resolve({ lat: 0, lon: 0, accuracy: undefined }),
+          () => reject(new Error('Unable to capture GPS location. Please enable location permission and try again.')),
           { enableHighAccuracy: true, timeout: 5000 }
         );
       });
@@ -556,7 +579,6 @@ export function CleanerApp({ user, onLogout }: Props) {
             scanError={scanError}
             nfcAvailabilityMessage={nfcAvailabilityMessage}
             onOpenNfcSettings={availability.supported === true && availability.enabled === false ? () => openSettings().catch(() => setScanError('Open device settings to enable NFC.')) : undefined}
-            nfcReady={availability.supported === false || availability.enabled === false ? false : true}
             onScan={handleScan}
             onAlerts={() => setAlertsOpen(true)}
             alertCount={alertCount}

@@ -63,6 +63,21 @@ def _get_checkpoint(uid: str):
     )
 
 
+def _active_checkpoint_count(store_id: str) -> int:
+    checkpoints = list(
+        checkpoints_container.query_items(
+            query="SELECT * FROM c WHERE c.store_id=@store_id",
+            parameters=[{"name": "@store_id", "value": store_id}],
+            enable_cross_partition_query=True,
+        )
+    )
+    return len([
+        checkpoint
+        for checkpoint in checkpoints
+        if checkpoint.get("is_active") or checkpoint.get("deployment_status") == "deployed"
+    ])
+
+
 def _latest_scan_for_uid(uid: str):
     scans = list(
         scan_container.query_items(
@@ -379,7 +394,9 @@ def process_scan(data):
         performed_by=employee_name,
     )
 
-    expected_checkpoints = int(store.get("checkpoint_count", 0) or 0) if store else 0
+    expected_checkpoints = _active_checkpoint_count(store_id)
+    if expected_checkpoints == 0:
+        expected_checkpoints = int(store.get("checkpoint_count", 0) or 0) if store else 0
     if expected_checkpoints == 0 and checkpoint:
         expected_checkpoints = 1
 
