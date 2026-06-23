@@ -59,7 +59,6 @@ function TagRegistrationView({ goBack, navigate }: { goBack: () => void; navigat
   const [scanning, setScanning] = useState(false);
   const [scanDone, setScanDone] = useState(false);
   const [gps, setGps] = useState<{ lat: number; lon: number } | null>(null);
-  const [checkpointId, setCheckpointId] = useState('');
   const scanFlowIdRef = useRef(0);
 
   useEffect(() => {
@@ -151,8 +150,7 @@ function TagRegistrationView({ goBack, navigate }: { goBack: () => void; navigat
         gps_lon: gps.lon,
         registered_by: registeredBy,
       });
-      setCheckpointId(checkpoint.checkpoint.id);
-      navigate('registration-review', { checkpointId: checkpoint.checkpoint.id });
+      navigate('registration-review', { checkpointId: checkpoint.checkpoint.id, nfcTagUid: uid.trim() });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to register checkpoint.');
     }
@@ -268,6 +266,7 @@ function RegistrationReviewView({ params, goBack }: { params: Record<string, unk
   const [checkpoint, setCheckpoint] = useState<any>(null);
   const [deployed, setDeployed] = useState(false);
   const checkpointId = params.checkpointId as string | undefined;
+  const nfcTagUid = (checkpoint?.nfc_tag_uid as string | undefined) ?? (params.nfcTagUid as string | undefined);
 
   useEffect(() => {
     if (!checkpointId) return;
@@ -316,10 +315,10 @@ function RegistrationReviewView({ params, goBack }: { params: Record<string, unk
         </div>
 
         <div className={`rounded-2xl border shadow-sm p-4 space-y-3 ${t.card}`}>
-          <h4 className={`text-sm font-semibold ${t.text}`}>Checkpoint Details</h4>
+          <h4 className={`text-sm font-semibold ${t.text}`}>Configuration Summary</h4>
           {[
             ['Checkpoint', checkpoint.name],
-            ['UID', checkpoint.nfc_tag_uid],
+            ['NFC Tag UID', nfcTagUid ?? '—'],
             ['Registered by', checkpoint.registered_by],
             ['Registered', checkpoint.registered_at ? new Date(checkpoint.registered_at).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'],
           ].map(([k, v]) => (
@@ -621,6 +620,7 @@ function UserCreationView({ goBack }: { goBack: () => void }) {
   const [newName, setNewName] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [showPass, setShowPass] = useState(false);
   const [newStore, setNewStore] = useState('');
 
@@ -637,7 +637,7 @@ function UserCreationView({ goBack }: { goBack: () => void }) {
       });
   }, []);
 
-  const canAdd = newName.trim() && newUsername.trim() && newPassword.trim();
+  const canAdd = newName.trim() && newUsername.trim() && newPassword.trim() && confirmPassword.trim();
   const storeName = (sid?: string | null) => stores.find(s => s.id === sid)?.name ?? '—';
 
   const [addError, setAddError] = useState('');
@@ -645,6 +645,10 @@ function UserCreationView({ goBack }: { goBack: () => void }) {
   const addUser = async () => {
     if (!canAdd) return;
     setAddError('');
+    if (newPassword !== confirmPassword) {
+      setAddError('Passwords do not match.');
+      return;
+    }
     try {
       const result = await createUser({
         name: newName.trim(),
@@ -661,7 +665,7 @@ function UserCreationView({ goBack }: { goBack: () => void }) {
       if (newUser && newUser.user_id) {
         setUsers(prev => [...prev, newUser]);
       }
-      setNewName(''); setNewUsername(''); setNewPassword(''); setShowAdd(false);
+      setNewName(''); setNewUsername(''); setNewPassword(''); setConfirmPassword(''); setShowAdd(false);
     } catch (err) {
       setAddError(err instanceof Error ? err.message : 'Failed to create user');
     }
@@ -702,6 +706,10 @@ function UserCreationView({ goBack }: { goBack: () => void }) {
                 <input type={showPass ? 'text' : 'password'} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="Set a password" className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 pr-10 ${t.input}`} />
                 <button onClick={() => setShowPass(v => !v)} className={`absolute right-3 top-1/2 -translate-y-1/2 ${t.textMuted}`}>{showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}</button>
               </div>
+            </div>
+            <div>
+              <label className={`block text-xs mb-1 ${t.textXs}`}>Confirm Password *</label>
+              <input type={showPass ? 'text' : 'password'} value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="Re-enter password" className={`w-full px-3 py-2.5 border rounded-xl text-sm focus:outline-none focus:border-orange-400 focus:ring-2 focus:ring-orange-100 ${t.input}`} />
             </div>
             <div>
               <label className={`block text-xs mb-1 ${t.textXs}`}>Assigned Store</label>

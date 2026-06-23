@@ -30,6 +30,7 @@ const categoryIcon: Record<string, React.ReactNode> = {
   'gps-mismatch': <MapPin className="w-4 h-4 text-orange-500" />,
   'low-compliance': <TrendingDown className="w-4 h-4 text-amber-500" />,
   'too-quick': <TrendingDown className="w-4 h-4 text-amber-500" />,
+  'tag-not-detected': <AlertTriangle className="w-4 h-4 text-red-500" />,
 };
 
 const categoryLabel: Record<string, string> = {
@@ -38,6 +39,7 @@ const categoryLabel: Record<string, string> = {
   'gps-mismatch': 'GPS Mismatch',
   'low-compliance': 'Low Compliance',
   'too-quick': 'Round Too Quick',
+  'tag-not-detected': 'Tag Not Detected',
 };
 
 type RichAlert = Alert & { storeName: string; storeNumber: string };

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { LineChart, Line, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import { useTheme, useT } from '../../ThemeContext';
-import { getCleanerDashboard, processScan, updateUserShift, type AppUser, type Alert, type ComplianceData, type Round } from '../../api';
+import { createAlert, getCleanerDashboard, processScan, updateUserShift, type AppUser, type Alert, type ComplianceData, type Round } from '../../api';
 import { useNfc } from '../../hooks/useNfc';
 
 type TabType = 'scan' | 'dashboard' | 'home';
@@ -21,15 +21,6 @@ type Checkpoint = {
   priority: 'high' | 'medium' | 'low' | '';
   status: 'pending' | 'scanning' | 'verified' | 'error';
   scannedAt?: string;
-};
-
-type ScanHistoryEntry = {
-  id: string;
-  uid: string;
-  location: string;
-  status: 'success' | 'error';
-  message: string;
-  time: string;
 };
 
 interface Props {
@@ -93,15 +84,16 @@ function StoreHeader({ storeName, alertCount, onAlerts }: { storeName: string; a
   );
 }
 
-function ScanTab({ checkpoints, scanHistory, scanStatus, scanError, nfcAvailabilityMessage, onOpenNfcSettings, onScan, onAlerts, alertCount, storeName, currentRoundName, dailyRoundsTotal, completedRoundsCount }: {
+function ScanTab({ checkpoints, scanStatus, scanError, nfcAvailabilityMessage, onOpenNfcSettings, onScan, onAlerts, onReportScanIssue, reportStatus, alertCount, storeName, currentRoundName, dailyRoundsTotal, completedRoundsCount }: {
   checkpoints: Checkpoint[];
-  scanHistory: ScanHistoryEntry[];
   scanStatus: ScanStatus;
   scanError?: string;
   nfcAvailabilityMessage?: string;
   onOpenNfcSettings?: () => void;
   onScan: () => void;
   onAlerts: () => void;
+  onReportScanIssue: () => void;
+  reportStatus: 'idle' | 'sending' | 'sent' | 'error';
   alertCount: number;
   storeName: string;
   currentRoundName?: string;
@@ -169,7 +161,14 @@ function ScanTab({ checkpoints, scanHistory, scanStatus, scanError, nfcAvailabil
           </div>
         )}
         {scanStatus === 'error' && scanError && (
-          <p className="text-xs text-center text-red-500 px-2">{scanError}</p>
+          <div className="space-y-2 text-center">
+            <p className="text-xs text-red-500 px-2">{scanError}</p>
+            <button onClick={onReportScanIssue} disabled={reportStatus === 'sending' || reportStatus === 'sent'} className="inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-red-50 text-red-700 border border-red-200 text-xs font-semibold hover:bg-red-100 disabled:opacity-60 transition-colors">
+              <AlertCircle className="w-3.5 h-3.5" />
+              {reportStatus === 'sending' ? 'Sending...' : reportStatus === 'sent' ? 'Alert Sent' : 'Send Alert to Admin'}
+            </button>
+            {reportStatus === 'error' && <p className="text-xs text-red-500">Unable to send alert. Please try again.</p>}
+          </div>
         )}
 
         <div className={`w-full rounded-2xl border shadow-sm overflow-hidden ${t.card}`}>
@@ -421,6 +420,7 @@ export function CleanerApp({ user, onLogout }: Props) {
   const [dashboard, setDashboard] = useState<Awaited<ReturnType<typeof getCleanerDashboard>> | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanStatus>('idle');
   const [scanError, setScanError] = useState('');
+  const [reportStatus, setReportStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
   const [alertsOpen, setAlertsOpen] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const scanFlowIdRef = useRef(0);
@@ -442,6 +442,7 @@ export function CleanerApp({ user, onLogout }: Props) {
       void cancelScan();
       setScanStatus('idle');
       setScanError('');
+      setReportStatus('idle');
     }
   }, [activeTab, cancelScan]);
 
@@ -476,6 +477,7 @@ export function CleanerApp({ user, onLogout }: Props) {
     if (!dashboard?.store || !nextCheckpoint || scanStatus === 'scanning') return;
     setScanStatus('scanning');
     setScanError('');
+    setReportStatus('idle');
     const flowId = ++scanFlowIdRef.current;
     try {
       const gpsPromise = new Promise<{ lat: number; lon: number; accuracy?: number }>((resolve, reject) => {
@@ -516,7 +518,9 @@ export function CleanerApp({ user, onLogout }: Props) {
         setScanError('Checkpoint could not be verified. Please try again.');
       }
       setRefreshKey(v => v + 1);
-      setTimeout(() => setScanStatus('idle'), 1200);
+      if (result.status === 'success') {
+        setTimeout(() => setScanStatus('idle'), 1200);
+      }
     } catch (error) {
       if (isNfcScanError(error) && error.kind === 'canceled') {
         setScanStatus('idle');
@@ -533,10 +537,29 @@ export function CleanerApp({ user, onLogout }: Props) {
 
       setScanError(errorMsg);
       setScanStatus('error');
-      setTimeout(() => {
-        setScanStatus('idle');
-        setScanError('');
-      }, 2200);
+    }
+  };
+
+  const reportScanIssue = async () => {
+    if (!dashboard?.store || reportStatus === 'sending' || reportStatus === 'sent') return;
+    setReportStatus('sending');
+    try {
+      await createAlert({
+        store_id: dashboard.store.id,
+        type: 'warning',
+        category: 'tag-not-detected',
+        title: 'NFC Tag Not Detected',
+        description: `${user.name} reported that a tag scan was not detected${nextCheckpoint ? ` at ${nextCheckpoint.location}` : ''}. ${scanError || 'Cleaner could not complete the NFC scan.'}`,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        location: nextCheckpoint?.location,
+        staff: user.name,
+        related_tag_uid: nextCheckpoint?.uid || undefined,
+        related_checkpoint_id: nextCheckpoint?.id || undefined,
+      });
+      setReportStatus('sent');
+      setRefreshKey(v => v + 1);
+    } catch {
+      setReportStatus('error');
     }
   };
 
@@ -581,6 +604,8 @@ export function CleanerApp({ user, onLogout }: Props) {
             onOpenNfcSettings={availability.supported === true && availability.enabled === false ? () => openSettings().catch(() => setScanError('Open device settings to enable NFC.')) : undefined}
             onScan={handleScan}
             onAlerts={() => setAlertsOpen(true)}
+            onReportScanIssue={reportScanIssue}
+            reportStatus={reportStatus}
             alertCount={alertCount}
             storeName={storeName}
             currentRoundName={dashboard?.current_round?.name ?? undefined}

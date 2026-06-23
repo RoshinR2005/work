@@ -66,7 +66,7 @@ export interface NFCTag {
 }
 
 export type AlertType = 'critical' | 'warning' | 'fraud';
-export type AlertCategory = 'missing-round' | 'duplicate-scan' | 'gps-mismatch' | 'low-compliance' | 'too-quick';
+export type AlertCategory = 'missing-round' | 'duplicate-scan' | 'gps-mismatch' | 'low-compliance' | 'too-quick' | 'tag-not-detected';
 
 export interface Alert {
   id: string;
@@ -672,6 +672,26 @@ export async function getAlerts(storeId?: string, reviewed?: boolean): Promise<A
   const suffix = query.toString() ? `?${query.toString()}` : '';
   const data = await request<any[]>(`/alerts${suffix}`);
   return data.map(normalizeAlert);
+}
+
+export async function createAlert(payload: {
+  store_id: string;
+  type: AlertType;
+  category: AlertCategory;
+  title: string;
+  description: string;
+  time: string;
+  location?: string;
+  staff?: string;
+  source_scan_id?: string;
+  related_tag_uid?: string;
+  related_checkpoint_id?: string;
+}): Promise<Alert> {
+  const data = await request<any>('/alerts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return normalizeAlert(data);
 }
 
 export async function getAlert(alertId: string, storeId?: string): Promise<Alert | null> {
