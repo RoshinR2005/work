@@ -47,12 +47,14 @@ const alertCategoryLabel: Record<string, string> = {
   'gps-mismatch': 'GPS Mismatch',
   'low-compliance': 'Low Compliance',
   'too-quick': 'Round Too Quick',
+  'tag-not-detected': 'Tag Not Detected',
 };
 
 const alertCategoryIcon = (category: string, size = 'w-4 h-4') => {
   if (category === 'missing-round') return <AlertTriangle className={`${size} text-red-500`} />;
   if (category === 'duplicate-scan') return <Copy className={`${size} text-amber-500`} />;
   if (category === 'gps-mismatch') return <MapPin className={`${size} text-orange-500`} />;
+  if (category === 'tag-not-detected') return <AlertTriangle className={`${size} text-red-500`} />;
   if (category === 'too-quick') return <Clock className={`${size} text-amber-500`} />;
   return <TrendingDown className={`${size} text-amber-500`} />;
 };
